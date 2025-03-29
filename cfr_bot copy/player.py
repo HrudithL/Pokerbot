@@ -42,7 +42,7 @@ class Player(Bot):
         if regret_sum > 0:
             strategy = [regret / regret_sum for regret in regrets]
         else:
-            strategy = [1.0 / self.num_actions for a in range(self.num_actions)] * self.num_actions
+            strategy = [1.0 / self.num_actions] * self.num_actions
             
         return strategy
 
@@ -80,14 +80,10 @@ class Player(Bot):
         
         # Evaluate hand and adjust strategy based on strength
         hand_strength = self.evaluate_hand(my_cards, board_cards)
-        print(hand_strength)
-        print(strategy[0])
-        print(strategy[1])
-        print(strategy[2])
         if hand_strength > pot_odds:
             # If hand is stronger than pot odds, increase call/raise probability
-            strategy[0] *= 0.7  # Reduce fold probability
-            strategy[1] *= 1.3  # Increase call probability
+            strategy[0] *= 0  # Reduce fold probability
+            strategy[1] *= 5  # Increase call probability
             strategy[2] *= 1.2  # Slightly increase raise probability
             # Renormalize
             total = sum(strategy)
@@ -125,7 +121,7 @@ class Player(Bot):
         # Convert selected action to actual poker action
         if action_type == 'raise':
             raise_amount = min_raise
-            if hand_strength >.8:  # Strong hand
+            if hand_strength > .8:  # Strong hand
                 raise_amount = max(min_raise, min(max_raise, int(min_raise * 2.5)))
             return RaiseAction(raise_amount)
         elif action_type == 'call':
@@ -143,30 +139,6 @@ class Player(Bot):
         """
         self.last_action = None
         self.last_info_set = None
-        
-        # Track position and round information
-        is_big_blind = bool(active)
-        my_cards = round_state.hands[active]
-        
-        # Initialize base strategy weights based on position
-        if is_big_blind:
-            base_regrets = {
-                0: 0.2,  # Lower fold regret in BB
-                1: 0.5,  # Medium call regret
-                2: 0.3   # Medium raise regret
-            }
-        else:  # Small blind
-            base_regrets = {
-                0: 0.3,  # Medium fold regret
-                1: 0.4,  # Medium call regret
-                2: 0.3   # Medium raise regret
-            }
-            
-        # Set initial regrets for this hand
-        info_set = self.get_info_set(round_state, active)
-        if not self.regret_sum[info_set]:
-            for action, regret in base_regrets.items():
-                self.regret_sum[info_set][action] = regret
         
         # Update average strategy if we have played some rounds
         if self.iterations > 0:
