@@ -34,10 +34,45 @@ class Player(Bot):
         
         return f"S{street}|C{my_cards_str}|B{board_str}|P{my_pip}|O{opp_pip}"
 
-    def get_strategy(self, info_set):
-        """Get current strategy for this information set"""
+    def get_simplified_info_set(self, round_state, active):
+        """Create a more general key for similar game states"""
+        street = round_state.street
+        my_cards = round_state.hands[active]
+        board_cards = round_state.deck[:street]
+        my_pip = round_state.pips[active]
+        opp_pip = round_state.pips[1-active]
+        
+        # Evaluate hand strength
+        hand_strength = self.evaluate_hand(my_cards, board_cards)
+        # Categorize hand strength into buckets
+        strength_bucket = int(hand_strength * 10) / 10  # Creates categories like 0.1, 0.2, etc.
+        
+        # Categorize bet sizes relative to pot
+        pot = my_pip + opp_pip
+        bet_ratio = opp_pip / pot if pot > 0 else 0
+        bet_category = int(bet_ratio * 4)  # Creates 4 betting categories
+        
+        return f"S{street}|H{strength_bucket}|B{bet_category}"
+
+    def get_strategy(self, info_set, round_state=None, active=None):
+        """Get current strategy for this information set and similar states"""
+        # Get exact strategy if exists
         regrets = [max(0, self.regret_sum[info_set][a]) for a in range(self.num_actions)]
         regret_sum = sum(regrets)
+        
+        # If no strong regrets and we have round state info, look for similar situations
+        if regret_sum < 0.1 and round_state is not None and active is not None:
+            simplified_info = self.get_simplified_info_set(round_state, active)
+            similar_regrets = [0] * self.num_actions
+            
+            # Aggregate regrets from similar situations
+            for stored_info in self.regret_sum:
+                if stored_info.startswith(simplified_info[:5]):
+                    for a in range(self.num_actions):
+                        similar_regrets[a] += self.regret_sum[stored_info][a] * 0.5
+            
+            regrets = [max(0, r + sr) for r, sr in zip(regrets, similar_regrets)]
+            regret_sum = sum(regrets)
         
         if regret_sum > 0:
             strategy = [regret / regret_sum for regret in regrets]
@@ -46,10 +81,19 @@ class Player(Bot):
             
         return strategy
 
-    def update_strategy(self, info_set, strategy, realization_weight):
-        """Update strategy sums for this information set"""
+    def update_strategy(self, info_set, strategy, realization_weight, round_state=None, active=None):
+        """Update strategy sums for this information set and similar ones"""
+        # Update exact info set
         for a in range(self.num_actions):
             self.strategy_sum[info_set][a] += realization_weight * strategy[a]
+        
+        # Update similar info sets only if we have round state info
+        if round_state is not None and active is not None:
+            simplified_info = self.get_simplified_info_set(round_state, active)
+            for stored_info in self.strategy_sum:
+                if stored_info.startswith(simplified_info[:5]):
+                    for a in range(self.num_actions):
+                        self.strategy_sum[stored_info][a] += realization_weight * strategy[a] * 0.3
 
     def evaluate_hand(self, my_cards, board_cards):
         """Evaluate hand strength using eval7"""
@@ -72,7 +116,7 @@ class Player(Bot):
         
         # Get current game state information
         info_set = self.get_info_set(round_state, active)
-        strategy = self.get_strategy(info_set)
+        strategy = self.get_strategy(info_set, round_state, active)
         
         # Calculate pot odds and adjust strategy
         pot = my_contribution + opp_contribution
@@ -80,6 +124,24 @@ class Player(Bot):
         
         # Evaluate hand and adjust strategy based on strength
         hand_strength = self.evaluate_hand(my_cards, board_cards)
+        
+        # More aggressive strategy against calling stations
+        if hand_strength > 0.7:  # Strong hand
+            strategy[0] = 0      # Never fold
+            strategy[1] = 0.2    # Rarely call
+            strategy[2] = 0.8    # Usually raise
+        elif hand_strength > 0.5:  # Medium hand
+            strategy[0] = 0.1    # Rarely fold
+            strategy[1] = 0.3    # Sometimes call
+            strategy[2] = 0.6    # Often raise
+        elif hand_strength > pot_odds:  # Profitable hand vs pot odds
+            strategy[0] = 0.2    # Sometimes fold
+            strategy[1] = 0.5    # Often call
+            strategy[2] = 0.3    # Sometimes raise
+        else:  # Weak hand
+            strategy[0] = 0.7    # Usually fold
+            strategy[1] = 0.2    # Sometimes call
+            strategy[2] = 0.1    # Rarely raise
         if hand_strength > pot_odds:
             # If hand is stronger than pot odds, increase call/raise probability
             strategy[0] *= 0  # Reduce fold probability
@@ -91,7 +153,7 @@ class Player(Bot):
         
         # Add realization weight calculation
         realization_weight = 1.0 / (self.iterations + 1)
-        self.update_strategy(info_set, strategy, realization_weight)
+        self.update_strategy(info_set, strategy, realization_weight, round_state, active)
         
         # Convert strategy probabilities to actions
         if RaiseAction in legal_actions:
@@ -121,8 +183,10 @@ class Player(Bot):
         # Convert selected action to actual poker action
         if action_type == 'raise':
             raise_amount = min_raise
-            if hand_strength > .8:  # Strong hand
-                raise_amount = max(min_raise, min(max_raise, int(min_raise * 2.5)))
+            if hand_strength > 0.8:  # Very strong hand
+                raise_amount = max_raise
+            elif hand_strength > 0.6:  # Strong hand
+                raise_amount = max(min_raise, min(max_raise, int(pot * 0.75)))
             return RaiseAction(raise_amount)
         elif action_type == 'call':
             if CheckAction in legal_actions:

@@ -80,10 +80,6 @@ class Player(Bot):
         
         # Evaluate hand and adjust strategy based on strength
         hand_strength = self.evaluate_hand(my_cards, board_cards)
-        print(hand_strength)
-        print(strategy[0])
-        print(strategy[1])
-        print(strategy[2])
         if hand_strength > pot_odds:
             # If hand is stronger than pot odds, increase call/raise probability
             strategy[0] *= 0.7  # Reduce fold probability
@@ -131,6 +127,9 @@ class Player(Bot):
         elif action_type == 'call':
             if CheckAction in legal_actions:
                 return CheckAction()
+            if self.iterations > 0 and hand_strength > .8:  # Strong hand
+                if RaiseAction in legal_actions:
+                    return RaiseAction(max_raise)
             return CallAction()
         else:
             if CheckAction in legal_actions:
